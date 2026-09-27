@@ -82,6 +82,9 @@ object FlarumApi {
             .build()
     }
 
+    /** 暴露给图片加载（Coil）使用的、带登录 Cookie 的 OkHttpClient。 */
+    val okHttpClient: OkHttpClient get() = client
+
     private val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
     /**
