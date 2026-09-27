@@ -32,6 +32,9 @@ data class Discussion(
     val createdAt: String,
     val lastPostedAt: String,
     val hasVideo: Boolean,
+    val authorId: String? = null,
+    val authorUsername: String? = null,
+    val authorDisplayName: String? = null,
 ) {
     val url: String get() = "$BASE/d/$slug"
     val apiUrl: String get() = "$API_BASE/discussions/$id"
@@ -41,6 +44,19 @@ data class Discussion(
         const val API_BASE = "$BASE/api"
     }
 }
+
+/**
+ * 论坛用户（作者）摘要。
+ */
+data class ForumUser(
+    val id: String,
+    val username: String,
+    val displayName: String?,
+    val slug: String?,
+    val avatarUrl: String?,
+    val discussionCount: Int,
+    val commentCount: Int,
+)
 
 /**
  * 论坛标签（分区）。

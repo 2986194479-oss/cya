@@ -1,7 +1,5 @@
-package com.viva.downloader.ui.browse
+package com.viva.downloader.ui.user
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,16 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -42,22 +37,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.viva.downloader.data.Discussion
-import com.viva.downloader.data.Tag
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowseScreen(
-    viewModel: BrowseViewModel,
+fun UserScreen(
+    viewModel: UserViewModel,
+    onBack: () -> Unit,
     onOpenDiscussion: (Discussion) -> Unit,
-    onOpenLogin: () -> Unit,
-    onOpenUser: (Discussion) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val listState = rememberLazyListState()
 
-    // 滚动到底部自动加载更多
     LaunchedEffect(listState) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
             .filter { it != null }
@@ -72,10 +64,16 @@ fun BrowseScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("论坛浏览", fontWeight = FontWeight.Bold, color = Color(0xFF4D698E)) },
-                actions = {
-                    IconButton(onClick = onOpenLogin) {
-                        Icon(Icons.Default.Person, contentDescription = "登录")
+                title = {
+                    Text(
+                        state.user?.displayName ?: state.user?.username ?: "作者主页",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF4D698E),
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFFF6F1E5)),
@@ -84,12 +82,34 @@ fun BrowseScreen(
         containerColor = Color(0xFFF6F1E5),
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // 标签栏
-            TagBar(
-                tags = state.tags,
-                selectedTagSlug = state.selectedTagSlug,
-                onSelectTag = { viewModel.selectTag(it) },
-            )
+            // 作者信息卡片
+            state.user?.let { user ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(
+                            user.displayName ?: user.username,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = Color(0xFF262019),
+                        )
+                        Text(
+                            "@${user.username}",
+                            fontSize = 13.sp,
+                            color = Color(0xFF8A8170),
+                        )
+                        Row(
+                            modifier = Modifier.padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            Text("帖子 ${user.discussionCount}", fontSize = 13.sp, color = Color(0xFF5C5344))
+                            Text("评论 ${user.commentCount}", fontSize = 13.sp, color = Color(0xFF5C5344))
+                        }
+                    }
+                }
+            }
 
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
@@ -103,9 +123,6 @@ fun BrowseScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Text("加载失败：${state.error}", color = Color(0xFFCC2E0C))
-                            androidx.compose.material3.Button(onClick = { viewModel.refresh() }) {
-                                Text("重试")
-                            }
                         }
                     }
                     else -> {
@@ -115,10 +132,9 @@ fun BrowseScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             items(state.discussions, key = { it.id }) { discussion ->
-                                DiscussionItem(
+                                UserDiscussionItem(
                                     discussion = discussion,
                                     onClick = { onOpenDiscussion(discussion) },
-                                    onAuthorClick = { onOpenUser(discussion) },
                                 )
                             }
                             if (state.loadingMore) {
@@ -140,63 +156,9 @@ fun BrowseScreen(
 }
 
 @Composable
-private fun TagBar(
-    tags: List<Tag>,
-    selectedTagSlug: String?,
-    onSelectTag: (String?) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // 「全部」标签
-        FilterChip(
-            selected = selectedTagSlug == null,
-            onClick = { onSelectTag(null) },
-            label = { Text("全部") },
-            colors = FilterChipDefaults.filterChipColors(
-                selectedContainerColor = Color(0xFF4D698E),
-                selectedLabelColor = Color.White,
-            ),
-        )
-
-        tags.forEach { tag ->
-            TagChip(
-                tag = tag,
-                selected = selectedTagSlug == tag.slug,
-                onClick = { onSelectTag(tag.slug) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun TagChip(
-    tag: Tag,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(tag.name) },
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = Color(0xFF4D698E),
-            selectedLabelColor = Color.White,
-            containerColor = Color.White,
-        ),
-    )
-}
-
-@Composable
-private fun DiscussionItem(
+private fun UserDiscussionItem(
     discussion: Discussion,
     onClick: () -> Unit,
-    onAuthorClick: () -> Unit,
 ) {
     Card(
         onClick = onClick,
@@ -221,23 +183,12 @@ private fun DiscussionItem(
                     overflow = TextOverflow.Ellipsis,
                     color = Color(0xFF262019),
                 )
-                // 作者行（可点击进入主页）
-                Row(
+                Text(
+                    text = "评论 ${discussion.commentCount}",
+                    fontSize = 12.sp,
+                    color = Color(0xFF8A8170),
                     modifier = Modifier.padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = discussion.authorDisplayName ?: discussion.authorUsername ?: "未知作者",
-                        fontSize = 12.sp,
-                        color = Color(0xFF4D698E),
-                        modifier = Modifier.clickable(onClick = onAuthorClick),
-                    )
-                    Text(
-                        text = " · 评论 ${discussion.commentCount}",
-                        fontSize = 12.sp,
-                        color = Color(0xFF8A8170),
-                    )
-                }
+                )
             }
             if (discussion.hasVideo) {
                 Icon(

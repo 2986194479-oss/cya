@@ -201,28 +201,58 @@ object FlarumApi {
     }
 
     /**
-     * 获取讨论列表（分页，可按标签过滤）。返回 (discussions, hasMore)。
+     * 获取用户主页信息。
+     */
+    suspend fun fetchUser(userId: String): ForumUser? = withContext(Dispatchers.IO) {
+        val root = jsonRequest("${Discussion.API_BASE}/users/$userId")
+        val data = root.optJSONObject("data") ?: return@withContext null
+        val attrs = data.optJSONObject("attributes") ?: return@withContext null
+        ForumUser(
+            id = data.optString("id"),
+            username = attrs.optString("username"),
+            displayName = attrs.optString("displayName").takeIf { it.isNotEmpty() },
+            slug = attrs.optString("slug"),
+            avatarUrl = attrs.optString("avatarUrl").takeIf { it.isNotEmpty() },
+            discussionCount = attrs.optInt("discussionCount"),
+            commentCount = attrs.optInt("commentCount"),
+        )
+    }
+
+    /**
+     * 获取讨论列表（分页，可按标签/作者过滤）。返回 (discussions, hasMore)。
      */
     suspend fun listDiscussions(
         offset: Int,
         limit: Int = 20,
         tagSlug: String? = null,
+        authorUsername: String? = null,
     ): Pair<List<Discussion>, Boolean> = withContext(Dispatchers.IO) {
         val base = "${Discussion.API_BASE}/discussions?page%5Boffset%5D=$offset&page%5Blimit%5D=$limit"
-        val url = if (tagSlug.isNullOrBlank()) base else "$base&filter%5Btag%5D=$tagSlug"
+        val url = buildString {
+            append(base)
+            if (!tagSlug.isNullOrBlank()) append("&filter%5Btag%5D=").append(tagSlug)
+            if (!authorUsername.isNullOrBlank()) append("&filter%5Bauthor%5D=").append(authorUsername)
+        }
         val root = jsonRequest(url)
 
             val data = root.optJSONArray("data") ?: org.json.JSONArray()
             val included = root.optJSONArray("included") ?: org.json.JSONArray()
 
-            // 建立 postId -> contentHtml 映射
+            // 建立 postId -> contentHtml 映射，以及 userId -> user 映射
             val postHtml = mutableMapOf<String, String>()
+            val userMap = mutableMapOf<String, org.json.JSONObject>()
             for (i in 0 until included.length()) {
                 val item = included.optJSONObject(i) ?: continue
-                if (item.optString("type") != "posts") continue
-                val pid = item.optString("id")
-                val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
-                postHtml[pid] = html
+                when (item.optString("type")) {
+                    "posts" -> {
+                        val pid = item.optString("id")
+                        val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
+                        postHtml[pid] = html
+                    }
+                    "users" -> {
+                        userMap[item.optString("id")] = item
+                    }
+                }
             }
 
             val discussions = mutableListOf<Discussion>()
@@ -245,6 +275,16 @@ object FlarumApi {
                 val html = firstPostId?.let { postHtml[it] } ?: ""
                 val hasVideo = AttachmentParser.parse(html, firstPostId ?: "").any { it.isVideo }
 
+                // 作者信息
+                val authorId = d.optJSONObject("relationships")
+                    ?.optJSONObject("user")
+                    ?.optJSONObject("data")
+                    ?.optString("id")
+                val authorObj = authorId?.let { userMap[it] }
+                val authorAttrs = authorObj?.optJSONObject("attributes")
+                val authorUsername = authorAttrs?.optString("username")
+                val authorDisplayName = authorAttrs?.optString("displayName")?.takeIf { it.isNotEmpty() }
+
                 discussions.add(
                     Discussion(
                         id = id,
@@ -254,6 +294,9 @@ object FlarumApi {
                         createdAt = createdAt,
                         lastPostedAt = lastPostedAt,
                         hasVideo = hasVideo,
+                        authorId = authorId,
+                        authorUsername = authorUsername,
+                        authorDisplayName = authorDisplayName,
                     )
                 )
             }

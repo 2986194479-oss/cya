@@ -31,11 +31,14 @@ import com.viva.downloader.ui.detail.DetailViewModel
 import com.viva.downloader.ui.login.LoginScreen
 import com.viva.downloader.ui.login.LoginViewModel
 import com.viva.downloader.ui.theme.VivaTheme
+import com.viva.downloader.ui.user.UserScreen
+import com.viva.downloader.ui.user.UserViewModel
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     object Browse : Screen("browse", "浏览", Icons.Default.List)
     object Detail : Screen("detail", "提取", Icons.Default.Search)
     object Login : Screen("login", "登录", Icons.Default.Person)
+    object User : Screen("user", "作者", Icons.Default.Person)
 }
 
 class MainActivity : ComponentActivity() {
@@ -58,6 +61,7 @@ fun App() {
     val browseViewModel: BrowseViewModel = viewModel()
     val detailViewModel: DetailViewModel = viewModel()
     val loginViewModel: LoginViewModel = viewModel()
+    val userViewModel: UserViewModel = viewModel()
 
     val showBottomBar = currentRoute == Screen.Browse.route || currentRoute == Screen.Detail.route
 
@@ -100,6 +104,10 @@ fun App() {
                         navController.navigate(Screen.Detail.route)
                     },
                     onOpenLogin = { navController.navigate(Screen.Login.route) },
+                    onOpenUser = { discussion ->
+                        userViewModel.openUser(discussion)
+                        navController.navigate(Screen.User.route)
+                    },
                 )
             }
             composable(Screen.Detail.route) {
@@ -112,6 +120,16 @@ fun App() {
                 LoginScreen(
                     viewModel = loginViewModel,
                     onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Screen.User.route) {
+                UserScreen(
+                    viewModel = userViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenDiscussion = { discussion ->
+                        detailViewModel.onOpenDiscussion(discussion.id, discussion.title)
+                        navController.navigate(Screen.Detail.route)
+                    },
                 )
             }
         }
