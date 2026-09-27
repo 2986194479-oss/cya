@@ -112,8 +112,7 @@ class DetailViewModel : ViewModel() {
             var done = 0
             for (attachment in toDownload) {
                 try {
-                    val bytes = FlarumApi.downloadAttachment(attachment)
-                    val fileName = saveToMediaStore(context, attachment, bytes)
+                    val fileName = downloadToMediaStore(context, attachment)
                     done++
                     _state.update {
                         it.copy(
@@ -148,7 +147,11 @@ class DetailViewModel : ViewModel() {
         }
     }
 
-    private suspend fun saveToMediaStore(context: Context, attachment: Attachment, bytes: ByteArray): String =
+    /**
+     * 流式下载：先在 MediaStore 创建目标文件拿到 OutputStream，
+     * 再边下边写，避免大视频一次性读入内存。
+     */
+    private suspend fun downloadToMediaStore(context: Context, attachment: Attachment): String =
         withContext(Dispatchers.IO) {
             val resolver = context.contentResolver
             val mime = when (attachment.ext) {
@@ -180,9 +183,15 @@ class DetailViewModel : ViewModel() {
             val uri = resolver.insert(collection, values)
                 ?: throw Exception("无法创建媒体文件")
 
-            resolver.openOutputStream(uri)?.use { out ->
-                out.write(bytes)
-            } ?: throw Exception("无法写入文件")
+            try {
+                resolver.openOutputStream(uri)?.use { out ->
+                    FlarumApi.downloadAttachmentTo(attachment, out)
+                } ?: throw Exception("无法写入文件")
+            } catch (e: Exception) {
+                // 下载失败时删除半成品
+                resolver.delete(uri, null, null)
+                throw e
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 values.clear()

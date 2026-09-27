@@ -1,12 +1,20 @@
 package com.viva.downloader.data
 
 import android.webkit.CookieManager
+import com.viva.downloader.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
@@ -14,7 +22,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -74,14 +84,36 @@ object FlarumApi {
 
     private val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
-    private fun jsonRequest(url: String): JSONObject {
+    /**
+     * 可取消的 OkHttp 请求：协程被取消时真正 cancel 底层网络调用。
+     */
+    private suspend fun executeAsync(request: Request): Response =
+        suspendCancellableCoroutine { cont ->
+            val call = client.newCall(request)
+            cont.invokeOnCancellation {
+                AppLogger.d("Net", "请求被取消: ${request.url}")
+                call.cancel()
+            }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    AppLogger.e("Net", "请求失败: ${request.url} - ${e.message}")
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    if (cont.isActive) cont.resume(response)
+                }
+            })
+        }
+
+    private suspend fun jsonRequest(url: String): JSONObject {
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", UA)
             .header("Accept", "application/json")
             .get()
             .build()
-        client.newCall(req).execute().use { resp ->
+        val resp = executeAsync(req)
+        resp.use {
             val body = resp.body?.string() ?: "{}"
             if (!resp.isSuccessful) {
                 throw Exception("HTTP ${resp.code}")
@@ -100,14 +132,15 @@ object FlarumApi {
     /**
      * 请求 /api，同时拿到 CSRF token（响应头 X-CSRF-Token）与登录态（actor 是否存在）。
      */
-    private fun fetchApiRoot(): ApiRoot {
+    private suspend fun fetchApiRoot(): ApiRoot {
         val req = Request.Builder()
             .url("${Discussion.API_BASE}")
             .header("User-Agent", UA)
             .header("Accept", "application/json")
             .get()
             .build()
-        client.newCall(req).execute().use { resp ->
+        val resp = executeAsync(req)
+        resp.use {
             val csrf = resp.header("X-CSRF-Token") ?: ""
             val body = resp.body?.string() ?: "{}"
             if (!resp.isSuccessful) {
@@ -144,6 +177,7 @@ object FlarumApi {
      */
     suspend fun login(identification: String, password: String, remember: Boolean = true): Boolean =
         withContext(Dispatchers.IO) {
+            AppLogger.i("Login", "尝试登录: $identification")
             val csrf = fetchCsrfToken()
             val body = buildString {
                 append("identification=").append(java.net.URLEncoder.encode(identification, "UTF-8"))
@@ -159,12 +193,16 @@ object FlarumApi {
                 .post(body.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
                 .build()
 
-            client.newCall(req).execute().use { resp ->
+            val resp = executeAsync(req)
+            resp.use {
                 if (resp.isSuccessful) {
+                    AppLogger.i("Login", "登录成功")
                     true
                 } else if (resp.code == 401) {
+                    AppLogger.w("Login", "登录失败：账号或密码错误")
                     false
                 } else {
+                    AppLogger.e("Login", "登录失败：HTTP ${resp.code}")
                     throw Exception("登录失败：HTTP ${resp.code}")
                 }
             }
@@ -314,18 +352,25 @@ object FlarumApi {
     suspend fun hasVideoInDiscussion(discussionId: String): Boolean = withContext(Dispatchers.IO) {
         val url = "${Discussion.API_BASE}/discussions/$discussionId"
         val root = jsonRequest(url)
+        val totalPosts = root.optJSONObject("data")
+            ?.optJSONObject("relationships")
+            ?.optJSONObject("posts")
+            ?.optJSONArray("data")?.length() ?: 0
+        AppLogger.d("Scan", "检测讨论 $discussionId（共 $totalPosts 帖）")
 
         // 先看默认返回的 included posts（首帖 + 部分评论），快速命中
+        val scannedIds = mutableSetOf<String>()
         val included = root.optJSONArray("included") ?: org.json.JSONArray()
         for (i in 0 until included.length()) {
             val item = included.optJSONObject(i) ?: continue
             if (item.optString("type") != "posts") continue
             val pid = item.optString("id")
+            scannedIds.add(pid)
             val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
             if (AttachmentParser.parse(html, pid).any { it.isVideo }) return@withContext true
         }
 
-        // 收集全部 post id（去重）
+        // 收集全部 post id（去重，跳过已扫过的 included posts）
         val postIds = mutableListOf<String>()
         val seen = mutableSetOf<String>()
         val postsRel = root.optJSONObject("data")
@@ -335,7 +380,7 @@ object FlarumApi {
         if (postsRel != null) {
             for (i in 0 until postsRel.length()) {
                 val pid = postsRel.optJSONObject(i)?.optString("id") ?: continue
-                if (seen.add(pid)) postIds.add(pid)
+                if (seen.add(pid) && pid !in scannedIds) postIds.add(pid)
             }
         }
 
@@ -345,6 +390,7 @@ object FlarumApi {
         val batchSize = 40
         var idx = 0
         while (idx < postIds.size && !found.get()) {
+            currentCoroutineContext().ensureActive()
             val batch = postIds.subList(idx, minOf(idx + batchSize, postIds.size))
             coroutineScope {
                 val deferreds = batch.map { pid ->
@@ -388,8 +434,22 @@ object FlarumApi {
     ): List<Attachment> = withContext(Dispatchers.IO) {
         val url = "${Discussion.API_BASE}/discussions/$discussionId"
         val root = jsonRequest(url)
+        AppLogger.d("Scan", "提取讨论 $discussionId 的视频")
 
-        // 收集全部 post id（去重、保序）
+        // 先解析默认返回的 included posts（避免重复请求）
+        val videos = mutableListOf<Attachment>()
+        val scannedIds = mutableSetOf<String>()
+        val included = root.optJSONArray("included") ?: org.json.JSONArray()
+        for (i in 0 until included.length()) {
+            val item = included.optJSONObject(i) ?: continue
+            if (item.optString("type") != "posts") continue
+            val pid = item.optString("id")
+            scannedIds.add(pid)
+            val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
+            videos.addAll(AttachmentParser.parse(html, pid).filter { it.isVideo })
+        }
+
+        // 收集全部 post id（去重、保序，跳过已扫过的 included posts）
         val postIds = mutableListOf<String>()
         val seen = mutableSetOf<String>()
         val postsRel = root.optJSONObject("data")
@@ -399,12 +459,10 @@ object FlarumApi {
         if (postsRel != null) {
             for (i in 0 until postsRel.length()) {
                 val pid = postsRel.optJSONObject(i)?.optString("id") ?: continue
-                if (seen.add(pid)) postIds.add(pid)
+                if (seen.add(pid) && pid !in scannedIds) postIds.add(pid)
             }
         }
 
-        // 默认返回的 included posts 里可能也有内容，但为了保证不漏，统一按 postIds 拉全
-        val videos = mutableListOf<Attachment>()
         val total = postIds.size
         var done = 0
 
@@ -413,6 +471,7 @@ object FlarumApi {
         val batchSize = 40
         var idx = 0
         while (idx < postIds.size) {
+            currentCoroutineContext().ensureActive()
             val batch = postIds.subList(idx, minOf(idx + batchSize, postIds.size))
             kotlinx.coroutines.coroutineScope {
                 val deferreds = batch.map { pid ->
@@ -446,29 +505,37 @@ object FlarumApi {
     // ── 下载 ────────────────────────────────────────────────
 
     /**
-     * 下载附件，返回二进制数据。
+     * 流式下载附件到输出流，边下边写，避免大视频一次性读入内存导致 OOM。
      * 接口：GET /api/fof/download/{uuid}/{postId}/{csrfToken}
+     * 返回写入的字节数。
      */
-    suspend fun downloadAttachment(attachment: Attachment): ByteArray = withContext(Dispatchers.IO) {
-        val url = buildStreamUrl(attachment)
-        val req = Request.Builder()
-            .url(url)
-            .header("User-Agent", UA)
-            .header("Referer", "${Discussion.BASE}/d/${attachment.postId}")
-            .get()
-            .build()
+    suspend fun downloadAttachmentTo(attachment: Attachment, output: java.io.OutputStream): Long =
+        withContext(Dispatchers.IO) {
+            AppLogger.i("Download", "下载 ${attachment.filename} (post ${attachment.postId})")
+            val url = buildStreamUrl(attachment)
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", UA)
+                .header("Referer", "${Discussion.BASE}/d/${attachment.postId}")
+                .get()
+                .build()
 
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                val code = resp.code
-                if (code == 403 || code == 401) {
-                    throw NotLoggedInException("需要登录后才能下载")
+            val resp = executeAsync(req)
+            resp.use {
+                if (!resp.isSuccessful) {
+                    val code = resp.code
+                    if (code == 403 || code == 401) {
+                        throw NotLoggedInException("需要登录后才能下载")
+                    }
+                    throw Exception("下载失败：HTTP $code")
                 }
-                throw Exception("下载失败：HTTP $code")
+                val body = resp.body ?: throw Exception("下载内容为空")
+                val written = body.byteStream().use { input ->
+                    input.copyTo(output)
+                }
+                written
             }
-            resp.body?.bytes() ?: throw Exception("下载内容为空")
         }
-    }
 
     /**
      * 构造带登录态的流式播放 URL（含 csrfToken）。

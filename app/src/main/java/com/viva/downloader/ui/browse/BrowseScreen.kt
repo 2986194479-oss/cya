@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Card
@@ -53,6 +54,7 @@ fun BrowseScreen(
     onOpenDiscussion: (Discussion) -> Unit,
     onOpenLogin: () -> Unit,
     onOpenUser: (Discussion) -> Unit,
+    onOpenLog: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val listState = rememberLazyListState()
@@ -74,6 +76,9 @@ fun BrowseScreen(
             TopAppBar(
                 title = { Text("论坛浏览", fontWeight = FontWeight.Bold, color = Color(0xFF4D698E)) },
                 actions = {
+                    IconButton(onClick = onOpenLog) {
+                        Icon(Icons.Default.Info, contentDescription = "日志")
+                    }
                     IconButton(onClick = onOpenLogin) {
                         Icon(Icons.Default.Person, contentDescription = "登录")
                     }

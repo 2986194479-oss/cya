@@ -30,6 +30,7 @@ import com.viva.downloader.ui.detail.DetailScreen
 import com.viva.downloader.ui.detail.DetailViewModel
 import com.viva.downloader.ui.login.LoginScreen
 import com.viva.downloader.ui.login.LoginViewModel
+import com.viva.downloader.ui.log.LogScreen
 import com.viva.downloader.ui.theme.VivaTheme
 import com.viva.downloader.ui.user.UserScreen
 import com.viva.downloader.ui.user.UserViewModel
@@ -39,6 +40,7 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object Detail : Screen("detail", "提取", Icons.Default.Search)
     object Login : Screen("login", "登录", Icons.Default.Person)
     object User : Screen("user", "作者", Icons.Default.Person)
+    object Log : Screen("log", "日志", Icons.Default.Person)
 }
 
 class MainActivity : ComponentActivity() {
@@ -108,6 +110,7 @@ fun App() {
                         userViewModel.openUser(discussion)
                         navController.navigate(Screen.User.route)
                     },
+                    onOpenLog = { navController.navigate(Screen.Log.route) },
                 )
             }
             composable(Screen.Detail.route) {
@@ -131,6 +134,9 @@ fun App() {
                         navController.navigate(Screen.Detail.route)
                     },
                 )
+            }
+            composable(Screen.Log.route) {
+                LogScreen(onBack = { navController.popBackStack() })
             }
         }
     }
