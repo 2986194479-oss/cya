@@ -2,6 +2,10 @@ package com.viva.downloader.data
 
 import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -261,22 +265,63 @@ object FlarumApi {
     // ── 详情：解析附件 ──────────────────────────────────────
 
     /**
-     * 读取单个讨论，返回其中所有视频附件。
+     * 读取单个讨论的全部帖子（首帖 + 所有评论），解析其中的视频附件。
+     *
+     * 说明：/api/discussions/{id} 默认只返回部分评论内容（约 20~43 条），
+     * 但 relationships.posts.data 里会给出全部 post id，因此需要逐个拉取
+     * /api/posts/{id} 才能扫全评论里的视频。
      */
-    suspend fun listVideos(discussionId: String): List<Attachment> = withContext(Dispatchers.IO) {
+    suspend fun listVideos(
+        discussionId: String,
+        onProgress: ((Int, Int) -> Unit)? = null,
+    ): List<Attachment> = withContext(Dispatchers.IO) {
         val url = "${Discussion.API_BASE}/discussions/$discussionId"
         val root = jsonRequest(url)
 
-        val included = root.optJSONArray("included") ?: org.json.JSONArray()
-        val videos = mutableListOf<Attachment>()
-        for (i in 0 until included.length()) {
-            val item = included.optJSONObject(i) ?: continue
-            if (item.optString("type") != "posts") continue
-            val pid = item.optString("id")
-            val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
-            val attachments = AttachmentParser.parse(html, pid)
-            videos.addAll(attachments.filter { it.isVideo })
+        // 收集全部 post id（去重、保序）
+        val postIds = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        val postsRel = root.optJSONObject("data")
+            ?.optJSONObject("relationships")
+            ?.optJSONObject("posts")
+            ?.optJSONArray("data")
+        if (postsRel != null) {
+            for (i in 0 until postsRel.length()) {
+                val pid = postsRel.optJSONObject(i)?.optString("id") ?: continue
+                if (seen.add(pid)) postIds.add(pid)
+            }
         }
+
+        // 默认返回的 included posts 里可能也有内容，但为了保证不漏，统一按 postIds 拉全
+        val videos = mutableListOf<Attachment>()
+        val total = postIds.size
+        var done = 0
+
+        // 并发拉取每个 post 的内容并解析
+        val semaphore = kotlinx.coroutines.sync.Semaphore(8)
+        kotlinx.coroutines.coroutineScope {
+            postIds.map { pid ->
+                async {
+                    semaphore.withPermit {
+                        try {
+                            val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
+                            val html = postRoot.optJSONObject("data")
+                                ?.optJSONObject("attributes")
+                                ?.optString("contentHtml") ?: ""
+                            AttachmentParser.parse(html, pid).filter { it.isVideo }
+                        } catch (e: Exception) {
+                            emptyList()
+                        }
+                    }
+                }
+            }.forEach { deferred ->
+                val found = deferred.await()
+                videos.addAll(found)
+                done++
+                onProgress?.invoke(done, total)
+            }
+        }
+
         videos
     }
 

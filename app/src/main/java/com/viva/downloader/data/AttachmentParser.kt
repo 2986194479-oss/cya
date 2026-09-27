@@ -26,6 +26,9 @@ object AttachmentParser {
     fun parse(contentHtml: String, postId: String): List<Attachment> {
         if (contentHtml.isBlank()) return emptyList()
 
+        // 帖子正文纯文本（去掉 HTML 标签），用于展示视频对应的“说的话”
+        val postText = htmlToText(contentHtml).trim().ifBlank { null }
+
         // 1. 找出所有 uuid 及其出现位置
         val uuidMatcher = UUID_PATTERN.matcher(contentHtml)
         val anchors = mutableListOf<Pair<Int, String>>() // (startIndex, uuid)
@@ -64,10 +67,39 @@ object AttachmentParser {
                     postId = postId,
                     filename = filename,
                     sizeLabel = sizeLabel,
+                    postText = postText,
                 )
             )
         }
         return result
+    }
+
+    /** 将 HTML 转为纯文本：提取正文段落，去标签、去多余空白。 */
+    private fun htmlToText(html: String): String {
+        // 优先提取 <p> 段落内容（Flarum 正文基本都在 <p> 里，附件块是 ButtonGroup 不混入）
+        val paragraphs = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL).findAll(html)
+            .map { it.groupValues[1] }
+            .toList()
+        var text = if (paragraphs.isNotEmpty()) {
+            paragraphs.joinToString("\n")
+        } else {
+            html
+        }
+        // 去掉 <br> 换行
+        text = text.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+        text = text.replace(Regex("<[^>]+>"), "")
+        // 解码常见实体
+        text = text
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+        // 压缩连续空白
+        text = text.replace(Regex("\\n{3,}"), "\n\n")
+        text = text.replace(Regex("[ \\t]+"), " ")
+        return text
     }
 
     /**

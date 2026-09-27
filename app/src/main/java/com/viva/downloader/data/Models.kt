@@ -8,6 +8,7 @@ data class Attachment(
     val postId: String,
     val filename: String,
     val sizeLabel: String? = null,
+    val postText: String? = null,
 ) {
     val isVideo: Boolean
         get() = filename.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS

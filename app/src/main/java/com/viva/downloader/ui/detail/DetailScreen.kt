@@ -263,6 +263,16 @@ private fun VideoItem(
                     fontSize = 12.sp,
                     color = Color(0xFF8A8170),
                 )
+                attachment.postText?.let { text ->
+                    Text(
+                        text,
+                        fontSize = 12.sp,
+                        color = Color(0xFF6B6357),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
             IconButton(onClick = onPlay) {
                 Icon(
