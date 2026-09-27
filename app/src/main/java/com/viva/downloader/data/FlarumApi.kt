@@ -265,6 +265,68 @@ object FlarumApi {
     // ── 详情：解析附件 ──────────────────────────────────────
 
     /**
+     * 判断某个讨论（含全部评论）里是否存在视频附件。
+     * 一旦发现视频立即短路返回，避免扫完全部评论。
+     */
+    suspend fun hasVideoInDiscussion(discussionId: String): Boolean = withContext(Dispatchers.IO) {
+        val url = "${Discussion.API_BASE}/discussions/$discussionId"
+        val root = jsonRequest(url)
+
+        // 先看默认返回的 included posts（首帖 + 部分评论），快速命中
+        val included = root.optJSONArray("included") ?: org.json.JSONArray()
+        for (i in 0 until included.length()) {
+            val item = included.optJSONObject(i) ?: continue
+            if (item.optString("type") != "posts") continue
+            val pid = item.optString("id")
+            val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
+            if (AttachmentParser.parse(html, pid).any { it.isVideo }) return@withContext true
+        }
+
+        // 收集全部 post id（去重）
+        val postIds = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        val postsRel = root.optJSONObject("data")
+            ?.optJSONObject("relationships")
+            ?.optJSONObject("posts")
+            ?.optJSONArray("data")
+        if (postsRel != null) {
+            for (i in 0 until postsRel.length()) {
+                val pid = postsRel.optJSONObject(i)?.optString("id") ?: continue
+                if (seen.add(pid)) postIds.add(pid)
+            }
+        }
+
+        // 并发扫其余评论，发现视频即返回
+        val semaphore = Semaphore(8)
+        val found = java.util.concurrent.atomic.AtomicBoolean(false)
+        coroutineScope {
+            val deferreds = postIds.map { pid ->
+                async {
+                    if (found.get()) return@async false
+                    semaphore.withPermit {
+                        if (found.get()) return@withPermit false
+                        try {
+                            val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
+                            val html = postRoot.optJSONObject("data")
+                                ?.optJSONObject("attributes")
+                                ?.optString("contentHtml") ?: ""
+                            val has = AttachmentParser.parse(html, pid).any { it.isVideo }
+                            if (has) found.set(true)
+                            has
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                }
+            }
+            for (d in deferreds) {
+                d.await()
+            }
+        }
+        found.get()
+    }
+
+    /**
      * 读取单个讨论的全部帖子（首帖 + 所有评论），解析其中的视频附件。
      *
      * 说明：/api/discussions/{id} 默认只返回部分评论内容（约 20~43 条），

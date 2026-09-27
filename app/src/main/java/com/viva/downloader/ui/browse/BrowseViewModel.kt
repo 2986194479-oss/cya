@@ -5,11 +5,18 @@ import androidx.lifecycle.viewModelScope
 import com.viva.downloader.data.Discussion
 import com.viva.downloader.data.FlarumApi
 import com.viva.downloader.data.Tag
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 
 data class BrowseUiState(
     val tags: List<Tag> = emptyList(),
@@ -28,6 +35,7 @@ class BrowseViewModel : ViewModel() {
 
     private var offset = 0
     private val pageSize = 20
+    private var detectJob: Job? = null
 
     init {
         loadTags()
@@ -53,6 +61,7 @@ class BrowseViewModel : ViewModel() {
 
     fun refresh() {
         offset = 0
+        detectJob?.cancel()
         _state.update { it.copy(loading = true, error = null, discussions = emptyList()) }
         viewModelScope.launch {
             try {
@@ -67,6 +76,7 @@ class BrowseViewModel : ViewModel() {
                         error = null,
                     )
                 }
+                startDetectVideos(list)
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.message ?: "加载失败") }
             }
@@ -89,8 +99,47 @@ class BrowseViewModel : ViewModel() {
                         error = null,
                     )
                 }
+                startDetectVideos(list)
             } catch (e: Exception) {
                 _state.update { it.copy(loadingMore = false, error = e.message ?: "加载失败") }
+            }
+        }
+    }
+
+    /**
+     * 后台逐条检测每个讨论（含全部评论）是否真有视频，
+     * 用于标记「首帖无视频但评论有」的情况。
+     */
+    private fun startDetectVideos(discussions: List<Discussion>) {
+        detectJob?.cancel()
+        detectJob = viewModelScope.launch(Dispatchers.IO) {
+            val semaphore = Semaphore(3)
+            coroutineScope {
+                discussions
+                    .filter { !it.hasVideo }
+                    .map { disc ->
+                        async {
+                            val has = semaphore.withPermit {
+                                try {
+                                    FlarumApi.hasVideoInDiscussion(disc.id)
+                                } catch (e: Exception) {
+                                    false
+                                }
+                            }
+                            disc to has
+                        }
+                    }
+                    .forEach { deferred ->
+                        val (disc, hasVideo) = deferred.await()
+                        if (hasVideo) {
+                            _state.update { st ->
+                                val updated = st.discussions.map { d ->
+                                    if (d.id == disc.id) d.copy(hasVideo = true) else d
+                                }
+                                st.copy(discussions = updated)
+                            }
+                        }
+                    }
             }
         }
     }
