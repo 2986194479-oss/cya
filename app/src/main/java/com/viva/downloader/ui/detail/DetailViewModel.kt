@@ -64,15 +64,17 @@ class DetailViewModel : ViewModel() {
             _state.update { it.copy(error = "无效的帖子链接或 ID") }
             return
         }
-        // 只扫视频，图片改为手动触发（分开加载，避免同时扫评论导致等待过久）
+        // 只扫首帖+最近评论（默认 included），很快出结果。评论里的视频和图片手动触发
         _state.update { it.copy(discussionId = id, loading = true, loadingImages = false, error = null, message = null, videos = emptyList(), images = emptyList(), selected = emptySet()) }
         viewModelScope.launch {
             try {
-                val videos = FlarumApi.listVideos(id)
+                val videos = FlarumApi.listVideos(id, scanComments = false)
+                val images = FlarumApi.listImages(id, scanComments = false)
                 _state.update {
                     it.copy(
                         loading = false,
                         videos = videos,
+                        images = images,
                         selected = videos.map { a -> a.uuid }.toSet(),
                         message = if (videos.isEmpty()) "该帖子未发现视频附件" else null,
                     )
@@ -83,14 +85,35 @@ class DetailViewModel : ViewModel() {
         }
     }
 
-    /** 手动加载图片（与视频分开，按需触发） */
-    fun loadImages() {
+    /** 加载评论里的视频 */
+    fun loadCommentVideos() {
+        val id = _state.value.discussionId ?: return
+        if (_state.value.loading) return
+        _state.update { it.copy(loading = true) }
+        viewModelScope.launch {
+            try {
+                val videos = FlarumApi.listVideos(id, scanComments = true)
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        videos = videos,
+                        selected = videos.map { a -> a.uuid }.toSet(),
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(loading = false, error = e.message ?: "加载评论视频失败") }
+            }
+        }
+    }
+
+    /** 加载评论里的图片 */
+    fun loadCommentImages() {
         val id = _state.value.discussionId ?: return
         if (_state.value.loadingImages) return
         _state.update { it.copy(loadingImages = true) }
         viewModelScope.launch {
             try {
-                val images = FlarumApi.listImages(id)
+                val images = FlarumApi.listImages(id, scanComments = true)
                 _state.update { it.copy(loadingImages = false, images = images) }
             } catch (e: Exception) {
                 _state.update { it.copy(loadingImages = false) }

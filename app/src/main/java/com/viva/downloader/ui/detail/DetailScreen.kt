@@ -216,17 +216,41 @@ fun DetailScreen(
                 }
             }
 
-            // 图片（照片）展示 —— 与视频分开，手动加载
-            if (state.loadingImages) {
-                item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        contentAlignment = Alignment.Center,
+            // 手动加载按钮：评论视频 + 评论图片
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Button(
+                        onClick = { viewModel.loadCommentVideos() },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        enabled = !state.loading,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE0532F)),
                     ) {
-                        CircularProgressIndicator()
+                        if (state.loading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text("🎬 评论视频", color = Color.White, fontSize = 14.sp)
+                    }
+                    Button(
+                        onClick = { viewModel.loadCommentImages() },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        enabled = !state.loadingImages,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4D698E)),
+                    ) {
+                        if (state.loadingImages) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text("📷 评论照片", color = Color.White, fontSize = 14.sp)
                     }
                 }
-            } else if (state.images.isNotEmpty()) {
+            }
+
+            // 照片展示
+            if (state.images.isNotEmpty()) {
                 item {
                     Text(
                         "照片 ${state.images.size} 张",
@@ -237,16 +261,6 @@ fun DetailScreen(
                 }
                 items(state.images, key = { it.url }) { image ->
                     ImageItem(image = image)
-                }
-            } else {
-                item {
-                    Button(
-                        onClick = { viewModel.loadImages() },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4D698E)),
-                    ) {
-                        Text("📷 加载照片", color = Color.White)
-                    }
                 }
             }
 

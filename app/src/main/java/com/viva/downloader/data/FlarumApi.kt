@@ -425,21 +425,19 @@ object FlarumApi {
     }
 
     /**
-     * 读取单个讨论的全部帖子（首帖 + 所有评论），解析其中的视频附件。
-     *
-     * 说明：/api/discussions/{id} 默认只返回部分评论内容（约 20~43 条），
-     * 但 relationships.posts.data 里会给出全部 post id，因此需要逐个拉取
-     * /api/posts/{id} 才能扫全评论里的视频。
+     * 读取讨论的视频附件。
+     * @param scanComments 是否扫描评论（false 时只扫详情接口默认返回的 posts，很快）
      */
     suspend fun listVideos(
         discussionId: String,
+        scanComments: Boolean = true,
         onProgress: ((Int, Int) -> Unit)? = null,
     ): List<Attachment> = withContext(Dispatchers.IO) {
         val url = "${Discussion.API_BASE}/discussions/$discussionId"
         val root = jsonRequest(url)
-        AppLogger.d("Scan", "提取讨论 $discussionId 的视频")
+        AppLogger.d("Scan", "提取讨论 $discussionId 的视频（scanComments=$scanComments）")
 
-        // 先解析默认返回的 included posts（避免重复请求）
+        // 解析默认返回的 included posts
         val videos = mutableListOf<Attachment>()
         val scannedIds = mutableSetOf<String>()
         val included = root.optJSONArray("included") ?: org.json.JSONArray()
@@ -451,6 +449,9 @@ object FlarumApi {
             val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
             videos.addAll(AttachmentParser.parse(html, pid).filter { it.isVideo })
         }
+
+        // 如果不扫评论，直接返回
+        if (!scanComments) return@withContext videos
 
         // 收集全部 post id（去重、保序，跳过已扫过的 included posts）
         val postIds = mutableListOf<String>()
@@ -506,15 +507,17 @@ object FlarumApi {
     }
 
     /**
-     * 读取单个讨论的全部帖子（首帖 + 所有评论），解析其中的图片（照片）。
+     * 读取讨论的图片（照片）。
+     * @param scanComments 是否扫描评论
      */
     suspend fun listImages(
         discussionId: String,
+        scanComments: Boolean = true,
         onProgress: ((Int, Int) -> Unit)? = null,
     ): List<PostImage> = withContext(Dispatchers.IO) {
         val url = "${Discussion.API_BASE}/discussions/$discussionId"
         val root = jsonRequest(url)
-        AppLogger.d("Scan", "提取讨论 $discussionId 的图片")
+        AppLogger.d("Scan", "提取讨论 $discussionId 的图片（scanComments=$scanComments）")
 
         // 先解析默认返回的 included posts
         val images = mutableListOf<PostImage>()
@@ -528,6 +531,9 @@ object FlarumApi {
             val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
             images.addAll(AttachmentParser.parseImages(html, pid))
         }
+
+        // 如果不扫评论，直接返回
+        if (!scanComments) return@withContext images.distinctBy { it.url }
 
         // 收集全部 post id（跳过已扫过的 included posts）
         val postIds = mutableListOf<String>()
