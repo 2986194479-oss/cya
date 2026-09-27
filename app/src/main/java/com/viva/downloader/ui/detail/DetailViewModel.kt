@@ -11,6 +11,7 @@ import com.viva.downloader.data.Attachment
 import com.viva.downloader.data.AttachmentParser
 import com.viva.downloader.data.FlarumApi
 import com.viva.downloader.data.NotLoggedInException
+import com.viva.downloader.data.PostImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,8 +25,10 @@ data class DetailUiState(
     val discussionId: String? = null,
     val title: String = "",
     val videos: List<Attachment> = emptyList(),
+    val images: List<PostImage> = emptyList(),
     val selected: Set<String> = emptySet(),
     val loading: Boolean = false,
+    val loadingImages: Boolean = false,
     val downloading: Boolean = false,
     val progress: Int = 0,
     val doneCount: Int = 0,
@@ -61,7 +64,7 @@ class DetailViewModel : ViewModel() {
             _state.update { it.copy(error = "无效的帖子链接或 ID") }
             return
         }
-        _state.update { it.copy(discussionId = id, loading = true, error = null, message = null, videos = emptyList(), selected = emptySet()) }
+        _state.update { it.copy(discussionId = id, loading = true, loadingImages = true, error = null, message = null, videos = emptyList(), images = emptyList(), selected = emptySet()) }
         viewModelScope.launch {
             try {
                 val videos = FlarumApi.listVideos(id)
@@ -75,6 +78,15 @@ class DetailViewModel : ViewModel() {
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.message ?: "识别失败") }
+            }
+        }
+        // 图片异步加载
+        viewModelScope.launch {
+            try {
+                val images = FlarumApi.listImages(id)
+                _state.update { it.copy(loadingImages = false, images = images) }
+            } catch (e: Exception) {
+                _state.update { it.copy(loadingImages = false) }
             }
         }
     }

@@ -43,7 +43,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.viva.downloader.data.Attachment
+import com.viva.downloader.data.PostImage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -214,6 +216,30 @@ fun DetailScreen(
                 }
             }
 
+            // 图片（照片）展示
+            if (state.loadingImages) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            } else if (state.images.isNotEmpty()) {
+                item {
+                    Text(
+                        "照片 ${state.images.size} 张",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF262019),
+                        fontSize = 15.sp,
+                    )
+                }
+                items(state.images, key = { it.url }) { image ->
+                    ImageItem(image = image)
+                }
+            }
+
             item { Spacer(Modifier.height(20.dp)) }
         }
 
@@ -226,6 +252,35 @@ fun DetailScreen(
         }
     }
 }
+}
+
+@Composable
+private fun ImageItem(
+    image: PostImage,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+    ) {
+        Column(Modifier.padding(8.dp)) {
+            AsyncImage(
+                model = image.url,
+                contentDescription = "照片",
+                modifier = Modifier
+                    .fillMaxWidth(),
+            )
+            image.postText?.let { text ->
+                Text(
+                    text,
+                    fontSize = 12.sp,
+                    color = Color(0xFF6B6357),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable

@@ -59,6 +59,15 @@ data class ForumUser(
 )
 
 /**
+ * 帖子里的图片（照片）。
+ */
+data class PostImage(
+    val url: String,
+    val postId: String,
+    val postText: String? = null,
+)
+
+/**
  * 论坛标签（分区）。
  */
 data class Tag(

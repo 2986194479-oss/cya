@@ -23,6 +23,27 @@ object AttachmentParser {
 
     private val SIZE_PATTERN = Pattern.compile("\\d+(\\.\\d+)?\\s*(KB|MB|GB)", Pattern.CASE_INSENSITIVE)
 
+    // 匹配 <img src="...">
+    private val IMG_PATTERN = Pattern.compile("<img[^>]*src=\"([^\"]+)\"", Pattern.CASE_INSENSITIVE)
+
+    /**
+     * 从帖子 contentHtml 解析其中的图片（照片）。
+     */
+    fun parseImages(contentHtml: String, postId: String): List<PostImage> {
+        if (contentHtml.isBlank()) return emptyList()
+        val postText = htmlToText(contentHtml).trim().ifBlank { null }
+        val matcher = IMG_PATTERN.matcher(contentHtml)
+        val result = mutableListOf<PostImage>()
+        val seen = mutableSetOf<String>()
+        while (matcher.find()) {
+            val src = matcher.group(1) ?: continue
+            if (seen.add(src)) {
+                result.add(PostImage(url = src, postId = postId, postText = postText))
+            }
+        }
+        return result
+    }
+
     fun parse(contentHtml: String, postId: String): List<Attachment> {
         if (contentHtml.isBlank()) return emptyList()
 
