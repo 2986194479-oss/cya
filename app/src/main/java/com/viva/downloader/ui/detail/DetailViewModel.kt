@@ -64,7 +64,8 @@ class DetailViewModel : ViewModel() {
             _state.update { it.copy(error = "无效的帖子链接或 ID") }
             return
         }
-        _state.update { it.copy(discussionId = id, loading = true, loadingImages = true, error = null, message = null, videos = emptyList(), images = emptyList(), selected = emptySet()) }
+        // 只扫视频，图片改为手动触发（分开加载，避免同时扫评论导致等待过久）
+        _state.update { it.copy(discussionId = id, loading = true, loadingImages = false, error = null, message = null, videos = emptyList(), images = emptyList(), selected = emptySet()) }
         viewModelScope.launch {
             try {
                 val videos = FlarumApi.listVideos(id)
@@ -80,7 +81,13 @@ class DetailViewModel : ViewModel() {
                 _state.update { it.copy(loading = false, error = e.message ?: "识别失败") }
             }
         }
-        // 图片异步加载
+    }
+
+    /** 手动加载图片（与视频分开，按需触发） */
+    fun loadImages() {
+        val id = _state.value.discussionId ?: return
+        if (_state.value.loadingImages) return
+        _state.update { it.copy(loadingImages = true) }
         viewModelScope.launch {
             try {
                 val images = FlarumApi.listImages(id)

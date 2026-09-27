@@ -579,10 +579,9 @@ object FlarumApi {
             idx += batchSize
         }
 
-        images
+        // 全局去重（同一 URL 可能出现在多个评论里，避免 LazyColumn key 重复崩溃）
+        images.distinctBy { it.url }
     }
-
-    // ── 下载 ────────────────────────────────────────────────
 
     /**
      * 流式下载附件到输出流，边下边写，避免大视频一次性读入内存导致 OOM。

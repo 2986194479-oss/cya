@@ -216,7 +216,7 @@ fun DetailScreen(
                 }
             }
 
-            // 图片（照片）展示
+            // 图片（照片）展示 —— 与视频分开，手动加载
             if (state.loadingImages) {
                 item {
                     Box(
@@ -237,6 +237,16 @@ fun DetailScreen(
                 }
                 items(state.images, key = { it.url }) { image ->
                     ImageItem(image = image)
+                }
+            } else {
+                item {
+                    Button(
+                        onClick = { viewModel.loadImages() },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4D698E)),
+                    ) {
+                        Text("📷 加载照片", color = Color.White)
+                    }
                 }
             }
 
