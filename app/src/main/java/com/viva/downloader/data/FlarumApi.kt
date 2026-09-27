@@ -339,32 +339,38 @@ object FlarumApi {
             }
         }
 
-        // 并发扫其余评论，发现视频即返回
+        // 分批并发扫其余评论，发现视频即返回，避免一次性创建上千协程导致 OOM
         val semaphore = Semaphore(8)
         val found = java.util.concurrent.atomic.AtomicBoolean(false)
-        coroutineScope {
-            val deferreds = postIds.map { pid ->
-                async {
-                    if (found.get()) return@async false
-                    semaphore.withPermit {
-                        if (found.get()) return@withPermit false
-                        try {
-                            val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
-                            val html = postRoot.optJSONObject("data")
-                                ?.optJSONObject("attributes")
-                                ?.optString("contentHtml") ?: ""
-                            val has = AttachmentParser.parse(html, pid).any { it.isVideo }
-                            if (has) found.set(true)
-                            has
-                        } catch (e: Exception) {
-                            false
+        val batchSize = 40
+        var idx = 0
+        while (idx < postIds.size && !found.get()) {
+            val batch = postIds.subList(idx, minOf(idx + batchSize, postIds.size))
+            coroutineScope {
+                val deferreds = batch.map { pid ->
+                    async {
+                        if (found.get()) return@async false
+                        semaphore.withPermit {
+                            if (found.get()) return@withPermit false
+                            try {
+                                val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
+                                val html = postRoot.optJSONObject("data")
+                                    ?.optJSONObject("attributes")
+                                    ?.optString("contentHtml") ?: ""
+                                val has = AttachmentParser.parse(html, pid).any { it.isVideo }
+                                if (has) found.set(true)
+                                has
+                            } catch (e: Exception) {
+                                false
+                            }
                         }
                     }
                 }
+                for (d in deferreds) {
+                    d.await()
+                }
             }
-            for (d in deferreds) {
-                d.await()
-            }
+            idx += batchSize
         }
         found.get()
     }
@@ -402,29 +408,36 @@ object FlarumApi {
         val total = postIds.size
         var done = 0
 
-        // 并发拉取每个 post 的内容并解析
+        // 分批并发拉取每个 post 的内容并解析，避免一次性创建上千协程导致 OOM
         val semaphore = kotlinx.coroutines.sync.Semaphore(8)
-        kotlinx.coroutines.coroutineScope {
-            postIds.map { pid ->
-                async {
-                    semaphore.withPermit {
-                        try {
-                            val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
-                            val html = postRoot.optJSONObject("data")
-                                ?.optJSONObject("attributes")
-                                ?.optString("contentHtml") ?: ""
-                            AttachmentParser.parse(html, pid).filter { it.isVideo }
-                        } catch (e: Exception) {
-                            emptyList()
+        val batchSize = 40
+        var idx = 0
+        while (idx < postIds.size) {
+            val batch = postIds.subList(idx, minOf(idx + batchSize, postIds.size))
+            kotlinx.coroutines.coroutineScope {
+                val deferreds = batch.map { pid ->
+                    async {
+                        semaphore.withPermit {
+                            try {
+                                val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
+                                val html = postRoot.optJSONObject("data")
+                                    ?.optJSONObject("attributes")
+                                    ?.optString("contentHtml") ?: ""
+                                AttachmentParser.parse(html, pid).filter { it.isVideo }
+                            } catch (e: Exception) {
+                                emptyList()
+                            }
                         }
                     }
                 }
-            }.forEach { deferred ->
-                val found = deferred.await()
-                videos.addAll(found)
-                done++
-                onProgress?.invoke(done, total)
+                deferreds.forEach { deferred ->
+                    val found = deferred.await()
+                    videos.addAll(found)
+                    done++
+                    onProgress?.invoke(done, total)
+                }
             }
+            idx += batchSize
         }
 
         videos
