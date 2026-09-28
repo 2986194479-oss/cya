@@ -43,19 +43,19 @@ class LoginViewModel : ViewModel() {
             _state.update { it.copy(error = "请输入账号和密码") }
             return
         }
-        if (_state.value.submitting) return
-
-        _state.update { it.copy(submitting = true, error = null) }
-        viewModelScope.launch {
-            try {
-                val ok = FlarumApi.login(ident, pwd)
-                if (ok) {
-                    _state.update { it.copy(loggedIn = true, submitting = false, password = "") }
-                } else {
-                    _state.update { it.copy(submitting = false, error = "账号或密码错误") }
+        // 原子 check-and-set：避免竞态
+        if (!_state.updateAndGet { if (it.submitting) it else it.copy(submitting = true, error = null) }.submitting) {
+            viewModelScope.launch {
+                try {
+                    val ok = FlarumApi.login(ident, pwd)
+                    if (ok) {
+                        _state.update { it.copy(loggedIn = true, submitting = false, password = "") }
+                    } else {
+                        _state.update { it.copy(submitting = false, error = "账号或密码错误") }
+                    }
+                } catch (e: Exception) {
+                    _state.update { it.copy(submitting = false, error = e.message ?: "登录失败") }
                 }
-            } catch (e: Exception) {
-                _state.update { it.copy(submitting = false, error = e.message ?: "登录失败") }
             }
         }
     }

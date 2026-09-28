@@ -220,6 +220,14 @@ fun LoginScreen(
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun WebViewLogin() {
+    val webView = remember { mutableStateOf<WebView?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            webView.value?.destroy()
+        }
+    }
+
     AndroidView(
         factory = { context ->
             WebView(context).apply {
@@ -231,6 +239,7 @@ private fun WebViewLogin() {
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 webViewClient = object : WebViewClient() {}
                 loadUrl(FORUM_URL)
+                webView.value = this
             }
         },
         modifier = Modifier.fillMaxSize(),

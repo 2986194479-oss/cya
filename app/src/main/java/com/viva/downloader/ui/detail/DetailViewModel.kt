@@ -117,7 +117,7 @@ class DetailViewModel : ViewModel() {
                 val allImages = FlarumApi.listImages(id, scanComments = true)
                 _state.update { it.copy(loadingImages = false, images = allImages) }
             } catch (e: Exception) {
-                _state.update { it.copy(loadingImages = false) }
+                _state.update { it.copy(loadingImages = false, error = e.message ?: "加载照片失败") }
             }
         }
     }
@@ -165,7 +165,7 @@ class DetailViewModel : ViewModel() {
                         )
                     }
                 } catch (e: NotLoggedInException) {
-                    _state.update { it.copy(downloading = false, error = "未登录或登录已过期，请先登录") }
+                    _state.update { it.copy(downloading = false, progress = 0, doneCount = 0, error = "未登录或登录已过期，请先登录") }
                     return@launch
                 } catch (e: Exception) {
                     _state.update {
