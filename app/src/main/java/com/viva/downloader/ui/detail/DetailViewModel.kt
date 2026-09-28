@@ -170,13 +170,11 @@ class DetailViewModel : ViewModel() {
                 } catch (e: Exception) {
                     _state.update {
                         it.copy(
-                            downloading = false,
                             error = "${attachment.filename}: ${e.message ?: "下载失败"}",
                             progress = (done * 100) / toDownload.size,
                             doneCount = done,
                         )
                     }
-                    return@launch
                 }
             }
             _state.update {

@@ -428,7 +428,7 @@ object FlarumApi {
      * 读取讨论的视频附件。
      * @param mode 0=只扫首帖  1=含评论
      */
-    private fun scanVideosOrImages(root: JSONObject, discussionId: String, mode: Int, parseVideos: Boolean): List<Any> {
+    private suspend fun scanVideosOrImages(root: JSONObject, discussionId: String, mode: Int, parseVideos: Boolean): List<Any> {
         val result = mutableListOf<Any>()
         val firstPostId = root.optJSONObject("data")?.optJSONObject("relationships")?.optJSONObject("firstPost")?.optJSONObject("data")?.optString("id")
 
@@ -443,6 +443,7 @@ object FlarumApi {
             }
             return result
         }
+        if (mode == 0) return emptyList()
 
         // mode == 1：全部评论
         val scannedIds = mutableSetOf<String>()

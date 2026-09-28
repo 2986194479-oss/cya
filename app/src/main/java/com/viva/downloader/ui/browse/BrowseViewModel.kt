@@ -80,7 +80,7 @@ class BrowseViewModel : ViewModel() {
         _state.update { it.copy(loading = true, error = null, discussions = emptyList()) }
         viewModelScope.launch {
             try {
-                val tag = _state.value.selectedTagSlug
+                val tag = _state.value.selectedTagSlug?.takeUnless { it == VIDEO_SLUG }
                 val (list, hasMore) = FlarumApi.listDiscussions(0, pageSize, tag)
                 offset = list.size
                 _state.update {
