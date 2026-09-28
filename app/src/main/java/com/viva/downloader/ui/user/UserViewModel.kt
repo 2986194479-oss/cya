@@ -71,7 +71,9 @@ class UserViewModel : ViewModel() {
                 val (list, hasMore) = FlarumApi.listDiscussions(offset, pageSize, authorUsername = authorUsername)
                 offset += list.size
                 _state.update {
-                    it.copy(discussions = it.discussions + list, loadingMore = false, hasMore = hasMore, error = null)
+                    val existing = it.discussions.map { d -> d.id }.toSet()
+                    val newOnes = list.filter { d -> d.id !in existing }
+                    it.copy(discussions = it.discussions + newOnes, loadingMore = false, hasMore = hasMore, error = null)
                 }
                 startDetectVideos(list)
             } catch (e: Exception) {
@@ -86,7 +88,7 @@ class UserViewModel : ViewModel() {
                 val (list, hasMore) = FlarumApi.listDiscussions(0, pageSize, authorUsername = authorUsername)
                 offset = list.size
                 _state.update {
-                    it.copy(discussions = list, loading = false, hasMore = hasMore, error = null)
+                    it.copy(discussions = list.distinctBy { d -> d.id }, loading = false, hasMore = hasMore, error = null)
                 }
                 startDetectVideos(list)
             } catch (e: Exception) {

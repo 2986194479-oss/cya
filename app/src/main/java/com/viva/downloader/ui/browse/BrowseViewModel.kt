@@ -70,7 +70,7 @@ class BrowseViewModel : ViewModel() {
                 offset = list.size
                 _state.update {
                     it.copy(
-                        discussions = list,
+                        discussions = list.distinctBy { d -> d.id },
                         loading = false,
                         hasMore = hasMore,
                         error = null,
@@ -92,8 +92,10 @@ class BrowseViewModel : ViewModel() {
                 val (list, hasMore) = FlarumApi.listDiscussions(offset, pageSize, tag)
                 offset += list.size
                 _state.update {
+                    val existing = it.discussions.map { d -> d.id }.toSet()
+                    val newOnes = list.filter { d -> d.id !in existing }
                     it.copy(
-                        discussions = it.discussions + list,
+                        discussions = it.discussions + newOnes,
                         loadingMore = false,
                         hasMore = hasMore,
                         error = null,
