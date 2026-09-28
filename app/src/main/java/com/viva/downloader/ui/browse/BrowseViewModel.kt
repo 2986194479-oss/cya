@@ -69,30 +69,41 @@ class BrowseViewModel : ViewModel() {
         val trimmed = query.trim()
         _state.update { it.copy(searchQuery = trimmed) }
         searchJob?.cancel()
-        if (trimmed.isBlank()) return
+        if (trimmed.isBlank()) {
+            // 清空搜索回到普通模式
+            _state.update { it.copy(videoOnly = false) }
+            refresh()
+            return
+        }
 
-        // 先清空列表，再从服务端翻页加载并匹配
-        offset = 0
-        _state.update { it.copy(loading = true, loadingMore = false, discussions = emptyList(), hasMore = true, videoOnly = false) }
+        // 搜索：持续翻页拉取全部数据，前台按标题匹配
+        _state.update { it.copy(loading = true, loadingMore = false, videoOnly = false) }
         searchJob = viewModelScope.launch {
-            var page = 0
-            while (page < 10) {  // 最多翻 10 页
-                if (_state.value.searchQuery.isBlank()) break
-                val (list, more) = FlarumApi.listDiscussions(page * pageSize, pageSize, tagSlug = null)
+            var offset = 0
+            var consecutiveFail = 0
+            while (true) {
+                if (_state.value.searchQuery.isBlank()) break  // 用户清空了搜索
+                val (list, more) = try {
+                    FlarumApi.listDiscussions(offset, pageSize, tagSlug = null)
+                } catch (e: Exception) {
+                    consecutiveFail++
+                    if (consecutiveFail >= 3) break  // 连续3次失败放弃
+                    continue
+                }
                 _state.update {
                     val existing = it.discussions.map { d -> d.id }.toSet()
                     val newOnes = list.filterNot { d -> d.id in existing }
                     it.copy(
                         discussions = it.discussions + newOnes,
                         loading = false,
-                        loadingMore = false,
-                        hasMore = more,
+                        loadingMore = more,
                     )
                 }
                 startDetectVideos(list)
-                page++
-                if (!more) break
+                if (list.isEmpty() || !more) break  // 拉完了
+                offset += list.size
             }
+            _state.update { it.copy(loading = false, loadingMore = false) }
         }
     }
 
@@ -150,29 +161,35 @@ class BrowseViewModel : ViewModel() {
         }
     }
 
-    /** 视频模式：自动翻页拉取全部数据，前台筛选 hasVideo */
+    /** 视频模式：持续翻页拉取全部数据，前台筛选 hasVideo */
     private fun startLoadingMoreForVideo() {
         searchJob?.cancel()
-        offset = 0
-        _state.update { it.copy(loading = true, loadingMore = false, discussions = emptyList(), hasMore = true) }
+        _state.update { it.copy(loading = true, loadingMore = false, hasMore = true) }
         searchJob = viewModelScope.launch {
-            var page = 0
-            while (page < 10) {
-                val (list, more) = FlarumApi.listDiscussions(page * pageSize, pageSize, tagSlug = null)
+            var offset = 0
+            var consecutiveFail = 0
+            while (true) {
+                val (list, more) = try {
+                    FlarumApi.listDiscussions(offset, pageSize, tagSlug = null)
+                } catch (e: Exception) {
+                    consecutiveFail++
+                    if (consecutiveFail >= 3) break
+                    continue
+                }
                 _state.update {
                     val existing = it.discussions.map { d -> d.id }.toSet()
                     val newOnes = list.filterNot { d -> d.id in existing }
                     it.copy(
                         discussions = it.discussions + newOnes,
                         loading = false,
-                        loadingMore = false,
-                        hasMore = more,
+                        loadingMore = more,
                     )
                 }
                 startDetectVideos(list)
-                page++
-                if (!more) break
+                if (list.isEmpty() || !more) break
+                offset += list.size
             }
+            _state.update { it.copy(loading = false, loadingMore = false) }
         }
     }
 
