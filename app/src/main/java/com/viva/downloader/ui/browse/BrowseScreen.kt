@@ -93,10 +93,10 @@ fun BrowseScreen(
         containerColor = Color(0xFFF6F1E5),
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // 搜索框
+            // 搜索框（防抖 300ms）
             OutlinedTextField(
                 value = state.searchQuery,
-                onValueChange = viewModel::onSearchChange,
+                onValueChange = { query -> viewModel.onSearchChange(query) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 6.dp),

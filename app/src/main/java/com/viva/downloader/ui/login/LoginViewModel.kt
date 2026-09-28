@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -43,8 +44,9 @@ class LoginViewModel : ViewModel() {
             _state.update { it.copy(error = "请输入账号和密码") }
             return
         }
-        // 原子 check-and-set：避免竞态
-        if (!_state.updateAndGet { if (it.submitting) it else it.copy(submitting = true, error = null) }.submitting) {
+        // 原子 check-and-set：避免竞态（getAndUpdate 返回旧状态，判断旧状态是否已 submitting）
+        val already = _state.getAndUpdate { if (it.submitting) it else it.copy(submitting = true, error = null) }
+        if (!already.submitting) {
             viewModelScope.launch {
                 try {
                     val ok = FlarumApi.login(ident, pwd)

@@ -38,6 +38,7 @@ class BrowseViewModel : ViewModel() {
     private var offset = 0
     private val pageSize = 20
     private var detectJob: Job? = null
+    private var searchJob: Job? = null
 
     init {
         loadTags()
@@ -49,16 +50,14 @@ class BrowseViewModel : ViewModel() {
             try {
                 val tags = FlarumApi.fetchTags()
                 _state.update { it.copy(tags = tags) }
-            } catch (_: Exception) {
-                // 标签加载失败不影响列表
-            }
+            } catch (_: Exception) { }
         }
     }
 
     fun selectTag(tagSlug: String?) {
         if (tagSlug == VIDEO_SLUG) {
-            // 「视频」标签：本地筛选，不重新请求
             _state.update { it.copy(selectedTagSlug = tagSlug, videoOnly = true, searchQuery = "") }
+            startLoadingMoreForVideo()
         } else {
             if (_state.value.selectedTagSlug == tagSlug) return
             _state.update { it.copy(selectedTagSlug = tagSlug, videoOnly = false, searchQuery = "") }
@@ -67,7 +66,34 @@ class BrowseViewModel : ViewModel() {
     }
 
     fun onSearchChange(query: String) {
-        _state.update { it.copy(searchQuery = query) }
+        val trimmed = query.trim()
+        _state.update { it.copy(searchQuery = trimmed) }
+        searchJob?.cancel()
+        if (trimmed.isBlank()) return
+
+        // 先清空列表，再从服务端翻页加载并匹配
+        offset = 0
+        _state.update { it.copy(loading = true, loadingMore = false, discussions = emptyList(), hasMore = true, videoOnly = false) }
+        searchJob = viewModelScope.launch {
+            var page = 0
+            while (page < 10) {  // 最多翻 10 页
+                if (_state.value.searchQuery.isBlank()) break
+                val (list, more) = FlarumApi.listDiscussions(page * pageSize, pageSize, tagSlug = null)
+                _state.update {
+                    val existing = it.discussions.map { d -> d.id }.toSet()
+                    val newOnes = list.filterNot { d -> d.id in existing }
+                    it.copy(
+                        discussions = it.discussions + newOnes,
+                        loading = false,
+                        loadingMore = false,
+                        hasMore = more,
+                    )
+                }
+                startDetectVideos(list)
+                page++
+                if (!more) break
+            }
+        }
     }
 
     companion object {
@@ -77,6 +103,7 @@ class BrowseViewModel : ViewModel() {
     fun refresh() {
         offset = 0
         detectJob?.cancel()
+        searchJob?.cancel()
         _state.update { it.copy(loading = true, error = null, discussions = emptyList()) }
         viewModelScope.launch {
             try {
@@ -123,10 +150,32 @@ class BrowseViewModel : ViewModel() {
         }
     }
 
-    /**
-     * 后台逐条检测每个讨论（含全部评论）是否真有视频，
-     * 用于标记「首帖无视频但评论有」的情况。
-     */
+    /** 视频模式：自动翻页拉取全部数据，前台筛选 hasVideo */
+    private fun startLoadingMoreForVideo() {
+        searchJob?.cancel()
+        offset = 0
+        _state.update { it.copy(loading = true, loadingMore = false, discussions = emptyList(), hasMore = true) }
+        searchJob = viewModelScope.launch {
+            var page = 0
+            while (page < 10) {
+                val (list, more) = FlarumApi.listDiscussions(page * pageSize, pageSize, tagSlug = null)
+                _state.update {
+                    val existing = it.discussions.map { d -> d.id }.toSet()
+                    val newOnes = list.filterNot { d -> d.id in existing }
+                    it.copy(
+                        discussions = it.discussions + newOnes,
+                        loading = false,
+                        loadingMore = false,
+                        hasMore = more,
+                    )
+                }
+                startDetectVideos(list)
+                page++
+                if (!more) break
+            }
+        }
+    }
+
     private fun startDetectVideos(discussions: List<Discussion>) {
         detectJob?.cancel()
         detectJob = viewModelScope.launch(Dispatchers.IO) {
@@ -137,11 +186,8 @@ class BrowseViewModel : ViewModel() {
                     .map { disc ->
                         async {
                             val has = semaphore.withPermit {
-                                try {
-                                    FlarumApi.hasVideoInDiscussion(disc.id)
-                                } catch (e: Exception) {
-                                    false
-                                }
+                                try { FlarumApi.hasVideoInDiscussion(disc.id) }
+                                catch (e: Exception) { false }
                             }
                             disc to has
                         }
