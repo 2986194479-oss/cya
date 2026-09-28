@@ -22,10 +22,12 @@ data class BrowseUiState(
     val tags: List<Tag> = emptyList(),
     val selectedTagSlug: String? = null,
     val discussions: List<Discussion> = emptyList(),
+    val searchQuery: String = "",
     val loading: Boolean = false,
     val loadingMore: Boolean = false,
     val error: String? = null,
     val hasMore: Boolean = true,
+    val videoOnly: Boolean = false,
 )
 
 class BrowseViewModel : ViewModel() {
@@ -54,9 +56,22 @@ class BrowseViewModel : ViewModel() {
     }
 
     fun selectTag(tagSlug: String?) {
-        if (_state.value.selectedTagSlug == tagSlug) return
-        _state.update { it.copy(selectedTagSlug = tagSlug) }
-        refresh()
+        if (tagSlug == VIDEO_SLUG) {
+            // 「视频」标签：本地筛选，不重新请求
+            _state.update { it.copy(selectedTagSlug = tagSlug, videoOnly = true, searchQuery = "") }
+        } else {
+            if (_state.value.selectedTagSlug == tagSlug) return
+            _state.update { it.copy(selectedTagSlug = tagSlug, videoOnly = false, searchQuery = "") }
+            refresh()
+        }
+    }
+
+    fun onSearchChange(query: String) {
+        _state.update { it.copy(searchQuery = query) }
+    }
+
+    companion object {
+        const val VIDEO_SLUG = "__video__"
     }
 
     fun refresh() {
@@ -88,7 +103,7 @@ class BrowseViewModel : ViewModel() {
         _state.update { it.copy(loadingMore = true) }
         viewModelScope.launch {
             try {
-                val tag = _state.value.selectedTagSlug
+                val tag = _state.value.selectedTagSlug?.takeUnless { it == VIDEO_SLUG }
                 val (list, hasMore) = FlarumApi.listDiscussions(offset, pageSize, tag)
                 offset += list.size
                 _state.update {

@@ -26,6 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -44,8 +45,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.viva.downloader.data.Discussion
 import com.viva.downloader.data.Tag
+import com.viva.downloader.ui.browse.BrowseViewModel.Companion.VIDEO_SLUG
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+
+private const val VIDEO_SLUG_VAL = VIDEO_SLUG
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,6 +93,16 @@ fun BrowseScreen(
         containerColor = Color(0xFFF6F1E5),
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // 搜索框
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = viewModel::onSearchChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                placeholder = { Text("搜索帖子标题…") },
+                singleLine = true,
+            )
             // 标签栏
             TagBar(
                 tags = state.tags,
@@ -114,12 +128,20 @@ fun BrowseScreen(
                         }
                     }
                     else -> {
+                        var shown = state.discussions
+                        if (state.videoOnly) {
+                            shown = shown.filter { it.hasVideo }
+                        }
+                        if (state.searchQuery.isNotBlank()) {
+                            val q = state.searchQuery.trim().lowercase()
+                            shown = shown.filter { it.title.lowercase().contains(q) }
+                        }
                         LazyColumn(
                             state = listState,
                             contentPadding = PaddingValues(vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            items(state.discussions, key = { it.id }) { discussion ->
+                            items(shown, key = { it.id }) { discussion ->
                                 DiscussionItem(
                                     discussion = discussion,
                                     onClick = { onOpenDiscussion(discussion) },
@@ -160,11 +182,22 @@ private fun TagBar(
     ) {
         // 「全部」标签
         FilterChip(
-            selected = selectedTagSlug == null,
+            selected = selectedTagSlug == null && !VIDEO_SLUG_VAL.equals(selectedTagSlug),
             onClick = { onSelectTag(null) },
             label = { Text("全部") },
             colors = FilterChipDefaults.filterChipColors(
                 selectedContainerColor = Color(0xFF4D698E),
+                selectedLabelColor = Color.White,
+            ),
+        )
+
+        // 「视频」标签
+        FilterChip(
+            selected = selectedTagSlug == VIDEO_SLUG_VAL,
+            onClick = { onSelectTag(VIDEO_SLUG_VAL) },
+            label = { Text("🎬 视频") },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = Color(0xFFE0532F),
                 selectedLabelColor = Color.White,
             ),
         )
@@ -178,6 +211,8 @@ private fun TagBar(
         }
     }
 }
+
+
 
 @Composable
 private fun TagChip(

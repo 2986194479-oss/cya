@@ -426,19 +426,25 @@ object FlarumApi {
 
     /**
      * 读取讨论的视频附件。
-     * @param scanComments 是否扫描评论（false 时只扫详情接口默认返回的 posts，很快）
+     * @param mode 0=只扫首帖  1=含评论
      */
-    suspend fun listVideos(
-        discussionId: String,
-        scanComments: Boolean = true,
-        onProgress: ((Int, Int) -> Unit)? = null,
-    ): List<Attachment> = withContext(Dispatchers.IO) {
-        val url = "${Discussion.API_BASE}/discussions/$discussionId"
-        val root = jsonRequest(url)
-        AppLogger.d("Scan", "提取讨论 $discussionId 的视频（scanComments=$scanComments）")
+    private fun scanVideosOrImages(root: JSONObject, discussionId: String, mode: Int, parseVideos: Boolean): List<Any> {
+        val result = mutableListOf<Any>()
+        val firstPostId = root.optJSONObject("data")?.optJSONObject("relationships")?.optJSONObject("firstPost")?.optJSONObject("data")?.optString("id")
 
-        // 解析默认返回的 included posts
-        val videos = mutableListOf<Attachment>()
+        if (mode == 0 && firstPostId != null) {
+            // 只扫首帖
+            val postRoot = try { jsonRequest("${Discussion.API_BASE}/posts/$firstPostId") } catch (e: Exception) { return emptyList() }
+            val html = postRoot.optJSONObject("data")?.optJSONObject("attributes")?.optString("contentHtml") ?: ""
+            if (parseVideos) {
+                result.addAll(AttachmentParser.parse(html, firstPostId).filter { it.isVideo })
+            } else {
+                result.addAll(AttachmentParser.parseImages(html, firstPostId))
+            }
+            return result
+        }
+
+        // mode == 1：全部评论
         val scannedIds = mutableSetOf<String>()
         val included = root.optJSONArray("included") ?: org.json.JSONArray()
         for (i in 0 until included.length()) {
@@ -447,19 +453,13 @@ object FlarumApi {
             val pid = item.optString("id")
             scannedIds.add(pid)
             val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
-            videos.addAll(AttachmentParser.parse(html, pid).filter { it.isVideo })
+            if (parseVideos) result.addAll(AttachmentParser.parse(html, pid).filter { it.isVideo })
+            else result.addAll(AttachmentParser.parseImages(html, pid))
         }
 
-        // 如果不扫评论，直接返回
-        if (!scanComments) return@withContext videos
-
-        // 收集全部 post id（去重、保序，跳过已扫过的 included posts）
         val postIds = mutableListOf<String>()
         val seen = mutableSetOf<String>()
-        val postsRel = root.optJSONObject("data")
-            ?.optJSONObject("relationships")
-            ?.optJSONObject("posts")
-            ?.optJSONArray("data")
+        val postsRel = root.optJSONObject("data")?.optJSONObject("relationships")?.optJSONObject("posts")?.optJSONArray("data")
         if (postsRel != null) {
             for (i in 0 until postsRel.length()) {
                 val pid = postsRel.optJSONObject(i)?.optString("id") ?: continue
@@ -467,126 +467,49 @@ object FlarumApi {
             }
         }
 
-        val total = postIds.size
         var done = 0
-
-        // 分批并发拉取每个 post 的内容并解析，避免一次性创建上千协程导致 OOM
+        val total = postIds.size
         val semaphore = kotlinx.coroutines.sync.Semaphore(8)
-        val batchSize = 40
         var idx = 0
         while (idx < postIds.size) {
             currentCoroutineContext().ensureActive()
-            val batch = postIds.subList(idx, minOf(idx + batchSize, postIds.size))
+            val batch = postIds.subList(idx, minOf(idx + 40, postIds.size))
             kotlinx.coroutines.coroutineScope {
                 val deferreds = batch.map { pid ->
                     async {
                         semaphore.withPermit {
                             try {
                                 val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
-                                val html = postRoot.optJSONObject("data")
-                                    ?.optJSONObject("attributes")
-                                    ?.optString("contentHtml") ?: ""
-                                AttachmentParser.parse(html, pid).filter { it.isVideo }
-                            } catch (e: Exception) {
-                                emptyList()
-                            }
+                                val html = postRoot.optJSONObject("data")?.optJSONObject("attributes")?.optString("contentHtml") ?: ""
+                                if (parseVideos) AttachmentParser.parse(html, pid).filter { it.isVideo }
+                                else AttachmentParser.parseImages(html, pid)
+                            } catch (e: Exception) { emptyList() }
                         }
                     }
                 }
-                deferreds.forEach { deferred ->
-                    val found = deferred.await()
-                    videos.addAll(found)
+                deferreds.forEach { df ->
+                    val res = df.await()
+                    result.addAll(res as Collection<Any>)
                     done++
-                    onProgress?.invoke(done, total)
                 }
             }
-            idx += batchSize
+            idx += 40
         }
-
-        videos
+        return result
     }
 
-    /**
-     * 读取讨论的图片（照片）。
-     * @param scanComments 是否扫描评论
-     */
-    suspend fun listImages(
-        discussionId: String,
-        scanComments: Boolean = true,
-        onProgress: ((Int, Int) -> Unit)? = null,
-    ): List<PostImage> = withContext(Dispatchers.IO) {
-        val url = "${Discussion.API_BASE}/discussions/$discussionId"
-        val root = jsonRequest(url)
+    suspend fun listVideos(discussionId: String, scanComments: Boolean = true): List<Attachment> = withContext(Dispatchers.IO) {
+        val root = jsonRequest("${Discussion.API_BASE}/discussions/$discussionId")
+        AppLogger.d("Scan", "提取讨论 $discussionId 的视频（scanComments=$scanComments）")
+        scanVideosOrImages(root, discussionId, if (scanComments) 1 else 0, true).filterIsInstance<Attachment>()
+    }
+
+    suspend fun listImages(discussionId: String, scanComments: Boolean = true): List<PostImage> = withContext(Dispatchers.IO) {
+        val root = jsonRequest("${Discussion.API_BASE}/discussions/$discussionId")
         AppLogger.d("Scan", "提取讨论 $discussionId 的图片（scanComments=$scanComments）")
-
-        // 先解析默认返回的 included posts
-        val images = mutableListOf<PostImage>()
-        val scannedIds = mutableSetOf<String>()
-        val included = root.optJSONArray("included") ?: org.json.JSONArray()
-        for (i in 0 until included.length()) {
-            val item = included.optJSONObject(i) ?: continue
-            if (item.optString("type") != "posts") continue
-            val pid = item.optString("id")
-            scannedIds.add(pid)
-            val html = item.optJSONObject("attributes")?.optString("contentHtml") ?: ""
-            images.addAll(AttachmentParser.parseImages(html, pid))
-        }
-
-        // 如果不扫评论，直接返回
-        if (!scanComments) return@withContext images.distinctBy { it.url }
-
-        // 收集全部 post id（跳过已扫过的 included posts）
-        val postIds = mutableListOf<String>()
-        val seen = mutableSetOf<String>()
-        val postsRel = root.optJSONObject("data")
-            ?.optJSONObject("relationships")
-            ?.optJSONObject("posts")
-            ?.optJSONArray("data")
-        if (postsRel != null) {
-            for (i in 0 until postsRel.length()) {
-                val pid = postsRel.optJSONObject(i)?.optString("id") ?: continue
-                if (seen.add(pid) && pid !in scannedIds) postIds.add(pid)
-            }
-        }
-
-        val total = postIds.size
-        var done = 0
-
-        // 分批并发拉取每个 post 的内容并解析图片
-        val semaphore = kotlinx.coroutines.sync.Semaphore(8)
-        val batchSize = 40
-        var idx = 0
-        while (idx < postIds.size) {
-            currentCoroutineContext().ensureActive()
-            val batch = postIds.subList(idx, minOf(idx + batchSize, postIds.size))
-            kotlinx.coroutines.coroutineScope {
-                val deferreds = batch.map { pid ->
-                    async {
-                        semaphore.withPermit {
-                            try {
-                                val postRoot = jsonRequest("${Discussion.API_BASE}/posts/$pid")
-                                val html = postRoot.optJSONObject("data")
-                                    ?.optJSONObject("attributes")
-                                    ?.optString("contentHtml") ?: ""
-                                AttachmentParser.parseImages(html, pid)
-                            } catch (e: Exception) {
-                                emptyList()
-                            }
-                        }
-                    }
-                }
-                deferreds.forEach { deferred ->
-                    val found = deferred.await()
-                    images.addAll(found)
-                    done++
-                    onProgress?.invoke(done, total)
-                }
-            }
-            idx += batchSize
-        }
-
-        // 全局去重（同一 URL 可能出现在多个评论里，避免 LazyColumn key 重复崩溃）
-        images.distinctBy { it.url }
+        scanVideosOrImages(root, discussionId, if (scanComments) 1 else 0, false)
+            .filterIsInstance<PostImage>()
+            .distinctBy { it.url }
     }
 
     /**

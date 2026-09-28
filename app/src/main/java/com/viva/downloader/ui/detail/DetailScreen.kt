@@ -225,10 +225,10 @@ fun DetailScreen(
                     Button(
                         onClick = { viewModel.loadCommentVideos() },
                         modifier = Modifier.weight(1f).height(44.dp),
-                        enabled = !state.loading,
+                        enabled = !state.loadingComments,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE0532F)),
                     ) {
-                        if (state.loading) {
+                        if (state.loadingComments) {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
                             Spacer(Modifier.width(6.dp))
                         }

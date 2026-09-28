@@ -29,6 +29,7 @@ data class DetailUiState(
     val selected: Set<String> = emptySet(),
     val loading: Boolean = false,
     val loadingImages: Boolean = false,
+    val loadingComments: Boolean = false,
     val downloading: Boolean = false,
     val progress: Int = 0,
     val doneCount: Int = 0,
@@ -88,20 +89,20 @@ class DetailViewModel : ViewModel() {
     /** 扫描评论中的视频，加载到现有列表中 */
     fun loadCommentVideos() {
         val id = _state.value.discussionId ?: return
-        if (_state.value.loading) return
-        _state.update { it.copy(loading = true) }
+        if (_state.value.loadingComments) return
+        _state.update { it.copy(loadingComments = true) }
         viewModelScope.launch {
             try {
                 val newVideos = FlarumApi.listVideos(id, scanComments = true)
                 _state.update {
                     it.copy(
-                        loading = false,
+                        loadingComments = false,
                         videos = newVideos,
                         selected = newVideos.map { a -> a.uuid }.toSet(),
                     )
                 }
             } catch (e: Exception) {
-                _state.update { it.copy(loading = false, error = e.message ?: "加载评论视频失败") }
+                _state.update { it.copy(loadingComments = false, error = e.message ?: "加载评论视频失败") }
             }
         }
     }
